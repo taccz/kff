@@ -38,19 +38,26 @@ kff.ViewFactory = kff.createClass(
 	 * @param  {Object} options  Options object passed to the view constuctor
 	 * @return {kff.View}        Created view
 	 */
-	createView: function(viewName, options)
+	createView: function(viewName, options, callback)
 	{
 		var view = null, viewClass;
 		options = options || {};
 
-		if(typeof viewName !== 'function' && this.serviceContainer && this.serviceContainer.hasService(viewName)) view = this.serviceContainer.getService(viewName, [options]);
+		if(typeof viewName !== 'function' && this.serviceContainer)
+		{
+			this.serviceContainer.hasService(viewName, this.f(function(has)
+			{
+				if(has) this.serviceContainer.getService(viewName, [options], callback);
+				else callback(null);
+			}));
+		}
 		else
 		{
 			if(typeof viewName !== 'function') viewClass = kff.evalObjectPath(viewName);
 			else viewClass = viewName;
 			if(viewClass) view = new viewClass(kff.mixins({}, options, { viewFactory: this }));
+			callback(view);
 		}
-		return view;
 	},
 
 	/**
@@ -61,11 +68,27 @@ kff.ViewFactory = kff.createClass(
 	 * @param  {[type]} viewName [description]
 	 * @return {[type]}          [description]
 	 */
-	getServiceConstructor: function(viewName)
+	getServiceConstructor: function(viewName, callback)
 	{
-		if(typeof viewName === 'function') return viewName;
-		if(this.serviceContainer && this.serviceContainer.hasService(viewName)) return this.serviceContainer.getServiceConstructor(viewName);
-		else return kff.evalObjectPath(viewName);
+		if(typeof viewName === 'function')
+		{
+			callback(viewName);
+		}
+		else if(this.serviceContainer)
+		{
+			this.serviceContainer.hasService(viewName, this.f(function(hasService)
+			{
+				if(hasService)
+				{
+					this.serviceContainer.getServiceConstructor(viewName, callback);
+				}
+				else
+				{
+					callback(kff.evalObjectPath(viewName));
+				}
+			}));
+		}
+		else callback(kff.evalObjectPath(viewName));
 	},
 
 	/**
@@ -78,11 +101,11 @@ kff.ViewFactory = kff.createClass(
 	{
 		var viewCtor;
 		if(typeof viewName === 'string' && this.precedingViews[viewName] !== undefined) return this.precedingViews[viewName];
-		else
-		{
-			viewCtor = this.getServiceConstructor(viewName);
-			if(viewCtor && viewCtor.precedingView) return viewCtor.precedingView;
-		}
+		// else
+		// {
+		// 	viewCtor = this.getServiceConstructor(viewName);
+		// 	if(viewCtor && viewCtor.precedingView) return viewCtor.precedingView;
+		// }
 		return null;
 	}
 

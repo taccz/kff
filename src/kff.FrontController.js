@@ -127,18 +127,38 @@ kff.FrontController = kff.createClass(
 	{
 		var i, l,
 			precedingViewNames = this.getPrecedingViews(this.newViewName),
-			from = 0;
+			from = 0,
+			viewConfigs = [];
+
+		var async = new kff.Async();
 
 		for(i = 0, l = precedingViewNames.length; i < l; i++)
 		{
-			if(i >= this.viewsQueue.length) this.pushView({ name: precedingViewNames[i], instance: this.viewFactory.createView(precedingViewNames[i], { viewFactory: this.viewFactory })});
+			if(i >= this.viewsQueue.length)
+			{
+				viewConfigs.push({
+					name: precedingViewNames[i],
+					instance: null
+				});
+				this.viewFactory.createView(precedingViewNames[i], { viewFactory: this.viewFactory }, async.add());
+			}
 			else from = i + 1;
 		}
 
-		this.newViewName = null;
-		if(this.getLastView()) this.getLastView().instance.on('render', kff.bindFn(this, 'cascadeState'));
-		if(this.viewsQueue[from]) this.viewsQueue[from].instance.init();
-		else this.cascadeState();
+		async.on('all', this.f(function(values)
+		{
+			for(i = 0, l = viewConfigs.length; i < l; i++)
+			{
+				viewConfigs[i].instance = values [i];
+				this.pushView(viewConfigs[i]);
+			}
+
+			this.newViewName = null;
+			if(this.getLastView()) this.getLastView().instance.on('render', kff.bindFn(this, 'cascadeState'));
+			if(this.viewsQueue[from]) this.viewsQueue[from].instance.init();
+			else this.cascadeState();
+		}));
+
 	},
 
 	findSharedView: function(c1, c2)
@@ -156,7 +176,7 @@ kff.FrontController = kff.createClass(
 		return c;
 	},
 
-	getPrecedingViews: function(viewName)
+	getPrecedingViews: function(viewName, callback)
 	{
 		var c = viewName, a = [c];
 
@@ -167,4 +187,5 @@ kff.FrontController = kff.createClass(
 		}
 		return a;
 	}
+
 });

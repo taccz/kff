@@ -326,13 +326,13 @@ kff.View = kff.createClass(
 	 * Renders the view. It will be called automatically. Should not be called
 	 * directly.
 	 */
-	renderAll: function()
+	renderAll: function(callback)
 	{
 		this.renderId = Math.floor(Math.random() * 100000000);
 		this.explicitSubviewsStruct = [];
 		this.render();
-		this.renderSubviews();
 		this.processEventTriggers();
+		this.renderSubviews(callback);
 	},
 
 	/**
@@ -362,7 +362,7 @@ kff.View = kff.createClass(
 	 * adds kff.View.DATA_KFF_VIEW attribute = "kff.BindingView" and inits
 	 * implicit data-binding.
 	 */
-	renderSubviews: function()
+	renderSubviews: function(callback)
 	{
 		var i, l, element = this.$element.get(0),
 			subView, options, opt, rendered, subviewsStruct;
@@ -371,18 +371,27 @@ kff.View = kff.createClass(
 
 		subviewsStruct = this.subviewsStruct.concat(this.explicitSubviewsStruct);
 
+		var async = new kff.Async();
+
 		// Render subviews
 		for(i = 0, l = subviewsStruct.length; i < l; i++)
 		{
-			options = subviewsStruct[i].options;
-			options.element = subviewsStruct[i].$element;
-			subView = this.createView(subviewsStruct[i].viewName, options);
-			if(subView instanceof kff.View)
+			(function(that)
 			{
-				subView.renderAll();
-			}
+				var cb = async.add();
+				options = subviewsStruct[i].options;
+				options.element = subviewsStruct[i].$element;
+				that.createView(i, subviewsStruct[i].viewName, options, that.f(function(subView)
+				{
+					if(subView instanceof kff.View)
+					{
+						subView.renderAll();
+					}
+					cb();
+				}));
+			})(this);
 		}
-
+		async.on('all', callback);
 	},
 
 	runSubviews: function()
@@ -406,16 +415,18 @@ kff.View = kff.createClass(
 	 * @param  {Object} options  Options object for the subview constructor
 	 * @return {kff.View}        Created view
 	 */
-	createView: function(viewName, options)
+	createView: function(i, viewName, options, callback)
 	{
 		options.parentView = this;
-		var subView = this.viewFactory.createView(viewName, options);
-		if(subView instanceof kff.View)
+		this.viewFactory.createView(viewName, options, this.f(function(subView)
 		{
-			subView.viewFactory = this.viewFactory;
-			this.subviews.push(subView);
-		}
-		return subView;
+			if(subView instanceof kff.View)
+			{
+				subView.viewFactory = this.viewFactory;
+				this.subviews[i] = subView;
+			}
+			callback(subView);
+		}));
 	},
 
 	/**

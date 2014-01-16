@@ -30,21 +30,49 @@ kff.ServiceContainer = kff.createClass(
 	 * @param {Array} argsExtend Array to overload default arguments array (optional)
 	 * @returns {Object} Instance of service
 	 */
-	getService: function(serviceName, argsExtend)
+	getService: function(serviceName, argsExtend, callback)
 	{
 		var serviceConfig;
-		if(!this.config.services[serviceName])
+
+		if(!callback)
 		{
-			serviceConfig = this.getServiceConfigAnnotation(serviceName);
-			if(serviceConfig) this.config.services[serviceName] = serviceConfig;
-			else throw new Error('Service ' + serviceName + ' not defined');
+			callback = argsExtend;
+			argsExtend = null;
 		}
-		if(this.config.services[serviceName].shared)
+			// console.log('getService ' + serviceName);
+
+		var processServiceConfig = this.f(function(serviceName)
 		{
-			if(typeof this.services[serviceName] === 'undefined') this.services[serviceName] = this.createService(serviceName, argsExtend);
-			return this.services[serviceName];
+			// console.log('processServiceConfig ' + serviceName);
+			if(this.config.services[serviceName].shared)
+			{
+				if(typeof this.services[serviceName] === 'undefined')
+				{
+					this.createService(serviceName, argsExtend, this.f(function(service){
+						this.services[serviceName] = service;
+						callback(service);
+					}));
+				}
+				else callback(this.services[serviceName]);
+			}
+			else
+			{
+				this.createService(serviceName, argsExtend, callback);
+			}
+		});
+
+		if(!this.config.services.hasOwnProperty(serviceName))
+		{
+			this.getServiceConfigAnnotation(serviceName, this.f(function(serviceConfig){
+				if(serviceConfig)
+				{
+					this.config.services[serviceName] = serviceConfig;
+					processServiceConfig(serviceName);
+				}
+				else throw new Error('Service ' + serviceName + ' not defined');
+			}));
 		}
-		return this.createService(serviceName, argsExtend);
+		else processServiceConfig(serviceName);
 	},
 
 	/**
@@ -52,18 +80,22 @@ kff.ServiceContainer = kff.createClass(
 	 * @param {string} serviceName Service name
 	 * @returns {boolean} True if service exists, false otherwise
 	 */
-	hasService: function(serviceName)
+	hasService: function(serviceName, callback)
 	{
-		if(this.config.services.hasOwnProperty(serviceName)) return true;
-		else {
-			var serviceConfig = this.getServiceConfigAnnotation(serviceName);
-			if(serviceConfig)
+		if(this.config.services.hasOwnProperty(serviceName)) callback(true);
+		else
+		{
+			this.getServiceConfigAnnotation(serviceName, this.f(function(serviceConfig)
 			{
-				this.config.services[serviceName] = serviceConfig;
-				return true;
-			}
+				var ret = false;
+				if(serviceConfig)
+				{
+					this.config.services[serviceName] = serviceConfig;
+					ret = true;
+				}
+				callback(ret);
+			}));
 		}
-		return false;
 	},
 
 	/**
@@ -77,58 +109,84 @@ kff.ServiceContainer = kff.createClass(
 	 * @param {Array} argsExtend Array to overload default arguments array (optional)
 	 * @returns {Object} Instance of service
 	 */
-	createService: function(serviceName, argsExtend)
+	createService: function(serviceName, argsExtend, callback)
 	{
 		var serviceConfig, Ctor, Temp, service, ret, i, l, args, argsExtended, calls;
 
+		if(!callback)
+		{
+			callback = argsExtend;
+			argsExtend = null;
+		}
+
 		serviceConfig = this.config.services[serviceName];
 
-		Ctor = this.getServiceConstructor(serviceName);
-
-		if(typeof Ctor !== 'function' || serviceConfig.type === 'function') return Ctor;
-
-		if(serviceConfig.type !== 'factory')
+		this.getServiceConstructor(serviceName, this.f(function(Ctor)
 		{
-			Temp = function(){};
-			Temp.prototype = Ctor.prototype;
-			service = new Temp();
-		}
 
-		args = this.resolveParameters(serviceConfig.args || []);
-		if(argsExtend && argsExtend instanceof Array)
-		{
-			argsExtended = [];
-			for(i = 0, l = argsExtend.length; i < l; i++)
+			if(typeof Ctor !== 'function' || serviceConfig.type === 'function')
 			{
-				if(argsExtend[i] !== undefined)
+				callback(Ctor);
+				return;
+			}
+
+			if(serviceConfig.type !== 'factory')
+			{
+				Temp = function(){};
+				Temp.prototype = Ctor.prototype;
+				service = new Temp();
+			}
+
+			this.resolveParameters(serviceConfig.args || [], this.f(function(args)
+			{
+
+				if(argsExtend && argsExtend instanceof Array)
 				{
-					if(kff.isPlainObject(args[i]) && kff.isPlainObject(argsExtend[i])) argsExtended[i] = kff.mixins({}, args[i], argsExtend[i]);
-					else argsExtended[i] = argsExtend[i];
+					argsExtended = [];
+					for(i = 0, l = argsExtend.length; i < l; i++)
+					{
+						if(argsExtend[i] !== undefined)
+						{
+							if(kff.isPlainObject(args[i]) && kff.isPlainObject(argsExtend[i])) argsExtended[i] = kff.mixins({}, args[i], argsExtend[i]);
+							else argsExtended[i] = argsExtend[i];
+						}
+						else argsExtended[i] = args[i];
+					}
+					args = argsExtended;
 				}
-				else argsExtended[i] = args[i];
-			}
-			args = argsExtended;
-		}
 
-		if(serviceConfig.type === 'factory')
-		{
-			service = Ctor.apply(null, args);
-		}
-		else
-		{
-			ret = Ctor.apply(service, args);
-			if(Object(ret) === ret) service = ret;
-		}
+				if(serviceConfig.type === 'factory')
+				{
+					service = Ctor.apply(null, args);
+				}
+				else
+				{
+					ret = Ctor.apply(service, args);
+					if(Object(ret) === ret) service = ret;
+				}
 
-		calls = serviceConfig.calls;
-		if(calls instanceof Array)
-		{
-			for(i = 0, l = calls.length; i < l; i++)
-			{
-				service[calls[i].method].apply(service, this.resolveParameters(calls[i].args));
-			}
-		}
-		return service;
+				calls = serviceConfig.calls;
+				if(calls instanceof Array)
+				{
+					var async = new kff.Async();
+					for(i = 0, l = calls.length; i < l; i++)
+					{
+						this.resolveParameters(calls[i].args, async.add());
+
+						service[calls[i].method].apply(service, this.resolveParameters(calls[i].args));
+					}
+					async.on('all', function(values)
+					{
+						service[calls[i].method].apply(service, values[i]);
+						callback(service);
+					});
+				}
+				else callback(service);
+
+			}));
+
+		}));
+
 	},
 
 	/**
@@ -136,31 +194,52 @@ kff.ServiceContainer = kff.createClass(
 	 * @param {string} serviceName Service name
 	 * @returns {function} Constructor function for service
 	 */
-	getServiceConstructor: function(serviceName)
+	getServiceConstructor: function(serviceName, callback)
 	{
 		var serviceConfig, ctor, construct = kff.ServiceContainer.CONFIG_CONSTRUCTOR, type, name, serviceObject, construct;
+
+		var processServiceConfig = this.f(function(serviceConfig)
+		{
+			if(serviceConfig.construct) construct = serviceConfig.construct;
+			else construct = serviceName;
+
+			if(!serviceConfig.hasOwnProperty('serviceObject'))
+			{
+				if(typeof construct === 'string')
+				{
+					this.loadService(construct, function(serviceObject){
+						serviceConfig['serviceObject'] = serviceObject;
+						callback(serviceObject);
+					});
+					return;
+				}
+				else serviceConfig['serviceObject'] = construct;
+				if(!serviceConfig['serviceObject'])
+				{
+					callback(null);
+					return;
+				}
+			}
+
+			callback(serviceConfig['serviceObject']);
+		});
+
 		serviceConfig = this.config.services[serviceName];
+
 		if(!serviceConfig)
 		{
-			serviceConfig = this.getServiceConfigAnnotation(serviceName);
-			if(!serviceConfig) return null;
-			else this.config.services[serviceName] = serviceConfig;
-		}
-
-		if(serviceConfig.construct) construct = serviceConfig.construct;
-		else construct = serviceName;
-
-		if(!serviceConfig.hasOwnProperty('serviceObject'))
-		{
-			if(typeof construct === 'string')
+			this.getServiceConfigAnnotation(serviceName, this.f(function(serviceConfig)
 			{
-				serviceConfig['serviceObject'] = this.loadService(construct);
-			}
-			else serviceConfig['serviceObject'] = construct;
-			if(!serviceConfig['serviceObject']) return null;
+				if(!serviceConfig) callback(null);
+				else
+				{
+					this.config.services[serviceName] = serviceConfig;
+					processServiceConfig(serviceConfig);
+				}
+			}));
 		}
+		else processServiceConfig(serviceConfig);
 
-		return serviceConfig['serviceObject'];
 	},
 
 	/**
@@ -168,22 +247,25 @@ kff.ServiceContainer = kff.createClass(
 	 * @param  {string} serviceName Name of service
 	 * @return {object}             Service configuration object
 	 */
-	getServiceConfigAnnotation: function(serviceName)
+	getServiceConfigAnnotation: function(serviceName, callback)
 	{
-		var serviceConfig = {};
-		var ctor = this.loadService(serviceName);
-		if(typeof ctor === 'function')
+		// console.log('getServiceConfigAnnotation ' + serviceName);
+		this.loadService(serviceName, function(ctor)
 		{
-			if('service' in ctor && kff.isPlainObject(ctor.service)) serviceConfig = ctor.service;
-			serviceConfig.serviceObject = ctor;
-			return serviceConfig;
-		}
-		else if(ctor)
-		{
-			serviceConfig.serviceObject = ctor;
-			return serviceConfig;
-		}
-		return null;
+			var serviceConfig = {}, ret = null;
+			if(typeof ctor === 'function')
+			{
+				if('service' in ctor && kff.isPlainObject(ctor.service)) serviceConfig = ctor.service;
+				serviceConfig.serviceObject = ctor;
+				ret = serviceConfig;
+			}
+			else if(ctor)
+			{
+				serviceConfig.serviceObject = ctor;
+				ret = serviceConfig;
+			}
+			callback(ret);
+		});
 	},
 
 	/**
@@ -203,7 +285,7 @@ kff.ServiceContainer = kff.createClass(
 	 * @param {string|Array|Object} params Parameters to be resolved
 	 * @returns {mixed} Resolved parameter value
 	 */
-	resolveParameters: function(params)
+	resolveParameters: function(params, callback)
 	{
 		var ret, i, l, config;
 
@@ -214,10 +296,10 @@ kff.ServiceContainer = kff.createClass(
 			if(params.charAt(0) === '@')
 			{
 				params = params.slice(1);
-				if(params.length === 0) ret = this;
-				else ret = this.getService(params);
+				if(params.length === 0) callback(this);
+				else this.getService(params, callback);
 			}
-			else if(this.cachedParams[params] !== undefined) ret = this.cachedParams[params];
+			else if(this.cachedParams[params] !== undefined) callback(this.cachedParams[params]);
 			else
 			{
 				if(params.search(kff.ServiceContainer.singleParamRegex) !== -1)
@@ -235,29 +317,44 @@ kff.ServiceContainer = kff.createClass(
 					ret = ret.replace('escpersign', '%');
 				}
 				this.cachedParams[params] = ret;
+				callback(ret);
 			}
 		}
 		else if(params instanceof Array)
 		{
-			ret = [];
+			var async = new kff.Async();
 			for(i = 0, l = params.length; i < l; i++)
 			{
-				ret[i] = this.resolveParameters(params[i]);
+				this.resolveParameters(params[i], async.add());
 			}
+			async.on('all', callback);
 		}
 		else if(kff.isPlainObject(params))
 		{
+			var keys = [];
+			var async = new kff.Async();
 			ret = {};
 			for(i in params)
 			{
-				if(params.hasOwnProperty(i)) ret[i] = this.resolveParameters(params[i]);
+				if(params.hasOwnProperty(i))
+				{
+					keys.push(i);
+					this.resolveParameters(params[i], async.add());
+				}
 			}
+			async.on('all', function(values)
+			{
+				for(i = 0, l = keys.length; i < l; i++)
+				{
+					ret[keys[i]] = values[i];
+				}
+				callback(ret);
+			});
 		}
 		else
 		{
-			ret = params;
+			callback(params);
 		}
-		return ret;
 	},
 
 	/**
@@ -302,7 +399,7 @@ kff.ServiceContainer = kff.createClass(
 	 * @param  {string}   serviceName Name of service
 	 * @return {mixed}                Service constructor or factory or any other type of service
 	 */
-	loadService: function(serviceName)
+	loadService: function(serviceName, callback)
 	{
 		if(typeof serviceName === 'string')
 		{
@@ -312,6 +409,10 @@ kff.ServiceContainer = kff.createClass(
 				serviceName = match[0];
 			}
 		}
-		return kff.evalObjectPath(serviceName);
+		var service = kff.evalObjectPath(serviceName);
+		setTimeout(function(){
+			callback(service);
+		}, 10);
 	}
 });
+
